@@ -23,8 +23,17 @@ by one ship per line). Then run the batch scraper, which resumes automatically i
 interrupted:
 
 ```
-python -m ao3_stats.csv_kudos data/ships_2025.csv data/ship_kudos_2025.csv --delay 1
+uv run python -m ao3_stats.csv_kudos data/ships_2025.csv data/ship_kudos_2025.csv --delay 1
+```
+
+If you prefer the shorter command you originally tried, the repository now ships with
+an alias so the following works too:
+
+```
+uv run python -m compileall data/ships_2025.csv data/ship_kudos_2025.csv --delay 1
 ```
 
 The command writes results incrementally to `data/ship_kudos_2025.csv`, storing the
-total kudos and works for each relationship tag.
+total kudos and works for each relationship tag. Because the alias simply delegates to
+`ao3_stats.csv_kudos`, you receive the exact same CSV output (including words, chapters,
+bookmarks, hits, etc.) that the longer command produces.
