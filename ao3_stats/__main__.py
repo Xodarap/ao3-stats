@@ -9,8 +9,14 @@ from .scraper import scrape_multiple_tags
 
 
 def parse_args(argv: List[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Scrape AO3 relationship kudos totals.")
-    parser.add_argument("tags", nargs="+", help="Tag names to scrape (e.g. fandoms)")
+    parser = argparse.ArgumentParser(
+        description="Scrape AO3 kudos totals for specific relationship tags."
+    )
+    parser.add_argument(
+        "tags",
+        nargs="+",
+        help="Relationship tags to scrape (e.g. 'A/B' ships)",
+    )
     parser.add_argument(
         "--pages",
         type=int,
@@ -22,12 +28,6 @@ def parse_args(argv: List[str] | None = None) -> argparse.Namespace:
         type=float,
         default=1.0,
         help="Delay in seconds between requests (default: 1.0)",
-    )
-    parser.add_argument(
-        "--top",
-        type=int,
-        default=10,
-        help="Number of top relationships to show for each tag (default: 10)",
     )
     parser.add_argument(
         "--json",
@@ -49,16 +49,11 @@ def main(argv: List[str] | None = None) -> int:
     results = scrape_multiple_tags(args.tags, max_pages=args.pages, delay=args.delay)
 
     if args.json:
-        serialisable = {
-            tag: [stat.__dict__ for stat in stats]
-            for tag, stats in results.items()
-        }
+        serialisable = {tag: stats.__dict__ for tag, stats in results.items()}
         print(json.dumps(serialisable, indent=2))
     else:
         for tag, stats in results.items():
-            print(f"\nTag: {tag}")
-            for idx, stat in enumerate(stats[: args.top], start=1):
-                print(f"{idx:>3}. {stat.name:<60} {stat.kudos:>10}")
+            print(f"{tag}: {stats.kudos} kudos across {stats.works} works")
     return 0
 
 

@@ -1,10 +1,9 @@
-"""Scrape AO3 relationship statistics using only the standard library."""
+"""Scrape AO3 ship kudos totals using only the standard library."""
 
 from __future__ import annotations
 
 import logging
 import time
-from collections import Counter
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from typing import Dict, Iterable, List, Optional, Tuple
@@ -16,11 +15,12 @@ LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
-class RelationshipStats:
-    """Aggregate statistics for a relationship tag."""
+class TagKudosStats:
+    """Aggregate kudos totals for a specific relationship tag."""
 
-    name: str
+    tag: str
     kudos: int
+    works: int
 
 
 DEFAULT_HEADERS = {
@@ -44,18 +44,13 @@ TAG_REPLACEMENTS = (
 
 
 class _WorksParser(HTMLParser):
-    """Parse AO3 works listing pages to extract relationship and kudos data."""
+    """Parse AO3 works listing pages to extract kudos data."""
 
     def __init__(self) -> None:
         super().__init__()
-        self.works: List[Dict[str, Optional[int] | List[str]]] = []
-        self._current_work: Optional[Dict[str, Optional[int] | List[str]]] = None
-        self._in_work = False
-        self._work_depth = 0
+        self.kudos_values: List[int] = []
         self._capture_kudos = False
         self._kudos_buffer: List[str] = []
-        self._capture_relationship = False
-        self._relationship_buffer: List[str] = []
         self._in_next_li = False
         self.has_next_page = False
 
@@ -63,24 +58,12 @@ class _WorksParser(HTMLParser):
         attrs_dict = dict(attrs)
         class_names = set((attrs_dict.get("class") or "").split())
 
-        if tag == "li" and {"work", "blurb", "group"}.issubset(class_names):
-            self._current_work = {"relationships": [], "kudos": None}
-            self.works.append(self._current_work)
-            self._in_work = True
-            self._work_depth = 0
-            return
+        if tag == "dd" and "kudos" in class_names:
+            self._capture_kudos = True
+            self._kudos_buffer = []
 
         if tag == "li" and "next" in class_names:
             self._in_next_li = True
-
-        if self._in_work:
-            self._work_depth += 1
-            if tag == "dd" and "kudos" in class_names:
-                self._capture_kudos = True
-                self._kudos_buffer = []
-            elif tag == "li" and "relationships" in class_names:
-                self._capture_relationship = True
-                self._relationship_buffer = []
 
         if self._in_next_li and tag == "a":
             # AO3 only includes the "next" link when a subsequent page is available.
@@ -90,45 +73,16 @@ class _WorksParser(HTMLParser):
         if self._capture_kudos and tag == "dd":
             text = "".join(self._kudos_buffer).strip().replace(",", "")
             if text.isdigit():
-                assert self._current_work is not None
-                self._current_work["kudos"] = int(text)
+                self.kudos_values.append(int(text))
             self._capture_kudos = False
             self._kudos_buffer = []
-
-        if self._capture_relationship and tag == "li":
-            text = "".join(self._relationship_buffer).strip()
-            if text:
-                assert self._current_work is not None
-                relationships = self._current_work["relationships"]
-                assert isinstance(relationships, list)
-                relationships.append(text)
-            self._capture_relationship = False
-            self._relationship_buffer = []
 
         if tag == "li" and self._in_next_li:
             self._in_next_li = False
 
-        if self._in_work:
-            if self._work_depth > 0:
-                self._work_depth -= 1
-            else:
-                if tag == "li":
-                    self._in_work = False
-                    self._current_work = None
-
     def handle_data(self, data: str) -> None:
         if self._capture_kudos:
             self._kudos_buffer.append(data)
-        if self._capture_relationship:
-            self._relationship_buffer.append(data)
-
-
-def _parse_kudos(value: Optional[int]) -> Optional[int]:
-    return value if isinstance(value, int) else None
-
-
-def _parse_relationships(value: Optional[int] | List[str]) -> List[str]:
-    return value if isinstance(value, list) else []
 
 
 def _encode_tag(tag: str) -> str:
@@ -139,7 +93,7 @@ def _encode_tag(tag: str) -> str:
     return quote(tag, safe="*")
 
 
-def _fetch_tag_page(tag: str, page: int) -> Tuple[List[Dict[str, Optional[int] | List[str]]], bool]:
+def _fetch_tag_page(tag: str, page: int) -> Tuple[List[int], bool]:
     # Relationship tags encode special characters using `*x*` sequences.
     encoded_tag = _encode_tag(tag)
     url = f"{BASE_URL}/tags/{encoded_tag}/works"
@@ -153,40 +107,34 @@ def _fetch_tag_page(tag: str, page: int) -> Tuple[List[Dict[str, Optional[int] |
 
     parser = _WorksParser()
     parser.feed(html)
-    return parser.works, parser.has_next_page
+    return parser.kudos_values, parser.has_next_page
 
 
-def scrape_relationship_kudos(
+def scrape_tag_kudos(
     tag: str,
     *,
     max_pages: Optional[int] = None,
     delay: float = REQUEST_DELAY,
-) -> Dict[str, RelationshipStats]:
-    """Scrape aggregate kudos for relationships under a given tag."""
+) -> TagKudosStats:
+    """Scrape kudos totals for a single relationship tag."""
 
-    counter: Counter[str] = Counter()
+    total_kudos = 0
+    works = 0
     page = 1
     while True:
         if max_pages is not None and page > max_pages:
             break
-        works, has_next = _fetch_tag_page(tag, page)
-        if not works:
+        kudos_values, has_next = _fetch_tag_page(tag, page)
+        if not kudos_values:
             break
-        for work in works:
-            kudos = _parse_kudos(work.get("kudos"))
-            if kudos is None:
-                continue
-            for relationship in _parse_relationships(work.get("relationships")):
-                counter[relationship] += kudos
+        total_kudos += sum(kudos_values)
+        works += len(kudos_values)
         if not has_next:
             break
         page += 1
         time.sleep(delay)
 
-    return {
-        name: RelationshipStats(name=name, kudos=kudos)
-        for name, kudos in counter.most_common()
-    }
+    return TagKudosStats(tag=tag, kudos=total_kudos, works=works)
 
 
 def scrape_multiple_tags(
@@ -194,12 +142,11 @@ def scrape_multiple_tags(
     *,
     max_pages: Optional[int] = None,
     delay: float = REQUEST_DELAY,
-) -> Dict[str, List[RelationshipStats]]:
-    """Scrape multiple tags and return a mapping of tag to sorted stats."""
+) -> Dict[str, TagKudosStats]:
+    """Scrape multiple tags and return a mapping of tag to totals."""
 
-    results: Dict[str, List[RelationshipStats]] = {}
+    results: Dict[str, TagKudosStats] = {}
     for tag in tags:
-        stats_map = scrape_relationship_kudos(tag, max_pages=max_pages, delay=delay)
-        results[tag] = list(stats_map.values())
+        results[tag] = scrape_tag_kudos(tag, max_pages=max_pages, delay=delay)
         time.sleep(delay)
     return results
