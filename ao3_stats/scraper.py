@@ -244,7 +244,10 @@ def _fetch_tag_page(
     # Relationship tags encode special characters using `*x*` sequences.
     encoded_tag = _encode_tag(tag)
     url = f"{BASE_URL}/tags/{encoded_tag}/works"
-    params = {}
+    params = {
+        "work_search[sort_column]": "hits",
+        "work_search[sort_direction]": "desc",
+    }
     if page > 1:
         params["page"] = page
     if date_from:
