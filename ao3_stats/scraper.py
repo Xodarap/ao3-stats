@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from html.parser import HTMLParser
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Set, Tuple
 from urllib.parse import quote
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -22,6 +22,28 @@ class TagKudosStats:
     tag: str
     kudos: int
     works: int
+    words: int
+    chapters: int
+    collections: int
+    comments: int
+    bookmarks: int
+    hits: int
+    unique_authors: int
+
+
+@dataclass
+class PageStats:
+    """Aggregate statistics extracted from a single works listing page."""
+
+    kudos: int = 0
+    works: int = 0
+    words: int = 0
+    chapters: int = 0
+    collections: int = 0
+    comments: int = 0
+    bookmarks: int = 0
+    hits: int = 0
+    authors: Set[str] = field(default_factory=set)
 
 
 DEFAULT_HEADERS = {
@@ -44,24 +66,64 @@ TAG_REPLACEMENTS = (
 )
 
 
+VOID_TAGS = {
+    "area",
+    "base",
+    "br",
+    "col",
+    "embed",
+    "hr",
+    "img",
+    "input",
+    "link",
+    "meta",
+    "param",
+    "source",
+    "track",
+    "wbr",
+}
+
+
 class _WorksParser(HTMLParser):
     """Parse AO3 works listing pages to extract kudos data."""
 
     def __init__(self) -> None:
         super().__init__()
-        self.kudos_values: List[int] = []
-        self._capture_kudos = False
-        self._kudos_buffer: List[str] = []
+        self.kudos_total = 0
+        self.words_total = 0
+        self.chapters_total = 0
+        self.collections_total = 0
+        self.comments_total = 0
+        self.bookmarks_total = 0
+        self.hits_total = 0
+        self.work_count = 0
+        self.unique_authors: Set[str] = set()
+        self._capture_field: Optional[str] = None
+        self._field_buffer: List[str] = []
         self._in_next_li = False
         self.has_next_page = False
+        self._in_work = False
+        self._work_tag_stack: List[str] = []
+        self._current_work_authors: Set[str] = set()
+        self._capture_author = False
+        self._author_buffer: List[str] = []
 
     def handle_starttag(self, tag: str, attrs: List[Tuple[str, Optional[str]]]) -> None:
         attrs_dict = dict(attrs)
         class_names = set((attrs_dict.get("class") or "").split())
 
-        if tag == "dd" and "kudos" in class_names:
-            self._capture_kudos = True
-            self._kudos_buffer = []
+        if tag == "li" and "work" in class_names:
+            self._in_work = True
+            self._work_tag_stack = [tag]
+            self._current_work_authors = set()
+        elif self._in_work and tag not in VOID_TAGS:
+            self._work_tag_stack.append(tag)
+
+        if tag == "dd":
+            field = self._extract_stat_field(class_names)
+            if field:
+                self._capture_field = field
+                self._field_buffer = []
 
         if tag == "li" and "next" in class_names:
             self._in_next_li = True
@@ -70,20 +132,98 @@ class _WorksParser(HTMLParser):
             # AO3 only includes the "next" link when a subsequent page is available.
             self.has_next_page = True
 
+        if self._in_work and tag == "a":
+            rel_values = set((attrs_dict.get("rel") or "").split())
+            if "author" in rel_values:
+                self._capture_author = True
+                self._author_buffer = []
+
+    @staticmethod
+    def _extract_stat_field(class_names: Set[str]) -> Optional[str]:
+        for candidate in (
+            "kudos",
+            "words",
+            "chapters",
+            "collections",
+            "comments",
+            "bookmarks",
+            "hits",
+        ):
+            if candidate in class_names:
+                return candidate
+        return None
+
+    @staticmethod
+    def _parse_int(text: str) -> Optional[int]:
+        cleaned = text.strip().replace(",", "")
+        if not cleaned or cleaned in {"-", "—", "?"}:
+            return 0
+        if cleaned.isdigit():
+            return int(cleaned)
+        return None
+
+    @staticmethod
+    def _parse_chapters(text: str) -> int:
+        cleaned = text.split("/", 1)[0].strip().replace(",", "")
+        if not cleaned or cleaned in {"-", "—", "?"}:
+            return 0
+        if cleaned.isdigit():
+            return int(cleaned)
+        return 0
+
     def handle_endtag(self, tag: str) -> None:
-        if self._capture_kudos and tag == "dd":
-            text = "".join(self._kudos_buffer).strip().replace(",", "")
-            if text.isdigit():
-                self.kudos_values.append(int(text))
-            self._capture_kudos = False
-            self._kudos_buffer = []
+        if self._capture_field and tag == "dd":
+            text = "".join(self._field_buffer)
+            field = self._capture_field
+            self._capture_field = None
+            self._field_buffer = []
+            if field == "chapters":
+                value = self._parse_chapters(text)
+            else:
+                value = self._parse_int(text)
+                if value is None:
+                    value = 0
+
+            if field == "kudos":
+                self.kudos_total += value
+            elif field == "words":
+                self.words_total += value
+            elif field == "chapters":
+                self.chapters_total += value
+            elif field == "collections":
+                self.collections_total += value
+            elif field == "comments":
+                self.comments_total += value
+            elif field == "bookmarks":
+                self.bookmarks_total += value
+            elif field == "hits":
+                self.hits_total += value
 
         if tag == "li" and self._in_next_li:
             self._in_next_li = False
 
+        if self._capture_author and tag == "a":
+            author = "".join(self._author_buffer).strip()
+            if author:
+                self._current_work_authors.add(author)
+            self._capture_author = False
+            self._author_buffer = []
+
+        if self._in_work:
+            if self._work_tag_stack:
+                self._work_tag_stack.pop()
+            if not self._work_tag_stack:
+                self._in_work = False
+                if self._current_work_authors:
+                    self.unique_authors.update(self._current_work_authors)
+                self.work_count += 1
+                self._current_work_authors = set()
+
     def handle_data(self, data: str) -> None:
-        if self._capture_kudos:
-            self._kudos_buffer.append(data)
+        if self._capture_field:
+            self._field_buffer.append(data)
+        if self._capture_author:
+            self._author_buffer.append(data)
 
 
 def _encode_tag(tag: str) -> str:
@@ -100,7 +240,7 @@ def _fetch_tag_page(
     *,
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
-) -> Tuple[List[int], bool]:
+) -> Tuple[PageStats, bool]:
     # Relationship tags encode special characters using `*x*` sequences.
     encoded_tag = _encode_tag(tag)
     url = f"{BASE_URL}/tags/{encoded_tag}/works"
@@ -121,7 +261,18 @@ def _fetch_tag_page(
 
     parser = _WorksParser()
     parser.feed(html)
-    return parser.kudos_values, parser.has_next_page
+    page_stats = PageStats(
+        kudos=parser.kudos_total,
+        works=parser.work_count,
+        words=parser.words_total,
+        chapters=parser.chapters_total,
+        collections=parser.collections_total,
+        comments=parser.comments_total,
+        bookmarks=parser.bookmarks_total,
+        hits=parser.hits_total,
+        authors=set(parser.unique_authors),
+    )
+    return page_stats, parser.has_next_page
 
 
 def scrape_tag_kudos(
@@ -135,7 +286,14 @@ def scrape_tag_kudos(
     """Scrape kudos totals for a single relationship tag."""
 
     total_kudos = 0
+    total_words = 0
+    total_chapters = 0
+    total_collections = 0
+    total_comments = 0
+    total_bookmarks = 0
+    total_hits = 0
     works = 0
+    unique_authors: Set[str] = set()
     page = 1
     date_from_str = date_from.isoformat() if date_from else None
     date_to_str = date_to.isoformat() if date_to else None
@@ -143,22 +301,40 @@ def scrape_tag_kudos(
     while True:
         if max_pages is not None and page > max_pages:
             break
-        kudos_values, has_next = _fetch_tag_page(
+        page_stats, has_next = _fetch_tag_page(
             tag,
             page,
             date_from=date_from_str,
             date_to=date_to_str,
         )
-        if not kudos_values:
+        if page_stats.works == 0:
             break
-        total_kudos += sum(kudos_values)
-        works += len(kudos_values)
+        total_kudos += page_stats.kudos
+        total_words += page_stats.words
+        total_chapters += page_stats.chapters
+        total_collections += page_stats.collections
+        total_comments += page_stats.comments
+        total_bookmarks += page_stats.bookmarks
+        total_hits += page_stats.hits
+        works += page_stats.works
+        unique_authors.update(page_stats.authors)
         if not has_next:
             break
         page += 1
         time.sleep(delay)
 
-    return TagKudosStats(tag=tag, kudos=total_kudos, works=works)
+    return TagKudosStats(
+        tag=tag,
+        kudos=total_kudos,
+        works=works,
+        words=total_words,
+        chapters=total_chapters,
+        collections=total_collections,
+        comments=total_comments,
+        bookmarks=total_bookmarks,
+        hits=total_hits,
+        unique_authors=len(unique_authors),
+    )
 
 
 def scrape_multiple_tags(
