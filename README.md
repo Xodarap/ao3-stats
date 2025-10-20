@@ -12,4 +12,5 @@ python -m ao3_stats "Aldebaran | Al*s*Priscilla Barielle" --pages 2
 ```
 
 Use `--pages` to inspect more works per tag, `--delay` to adjust the pause between
-requests, and `--json` for machine-readable output.
+requests, and `--json` for machine-readable output. You can also restrict results to
+works posted within a specific time range with `--start-date` and `--end-date`.
