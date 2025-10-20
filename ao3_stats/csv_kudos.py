@@ -147,7 +147,18 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     relationships = list(read_relationships(cfg.input_csv))
     completed = load_completed(cfg.output_csv)
-    fieldnames = ("relationship", "kudos", "works")
+    fieldnames = (
+        "relationship",
+        "kudos",
+        "works",
+        "words",
+        "chapters",
+        "collections",
+        "comments",
+        "bookmarks",
+        "hits",
+        "unique_authors",
+    )
     ensure_output(cfg.output_csv, fieldnames)
 
     for relationship in relationships:
@@ -162,6 +173,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "relationship": relationship,
                 "kudos": stats.kudos,
                 "works": stats.works,
+                "words": stats.words,
+                "chapters": stats.chapters,
+                "collections": stats.collections,
+                "comments": stats.comments,
+                "bookmarks": stats.bookmarks,
+                "hits": stats.hits,
+                "unique_authors": stats.unique_authors,
             },
         )
         completed.add(relationship)
