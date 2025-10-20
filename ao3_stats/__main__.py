@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+from datetime import date
 from typing import List
 
 from .scraper import scrape_multiple_tags
@@ -35,18 +36,37 @@ def parse_args(argv: List[str] | None = None) -> argparse.Namespace:
         help="Output raw JSON instead of a formatted table.",
     )
     parser.add_argument(
+        "--start-date",
+        type=date.fromisoformat,
+        help="Only include works posted on or after this date (YYYY-MM-DD)",
+    )
+    parser.add_argument(
+        "--end-date",
+        type=date.fromisoformat,
+        help="Only include works posted on or before this date (YYYY-MM-DD)",
+    )
+    parser.add_argument(
         "--log-level",
         default="WARNING",
         help="Logging level (default: WARNING)",
     )
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.start_date and args.end_date and args.start_date > args.end_date:
+        parser.error("--start-date must be before or equal to --end-date")
+    return args
 
 
 def main(argv: List[str] | None = None) -> int:
     args = parse_args(argv)
     logging.basicConfig(level=getattr(logging, args.log_level.upper(), logging.WARNING))
 
-    results = scrape_multiple_tags(args.tags, max_pages=args.pages, delay=args.delay)
+    results = scrape_multiple_tags(
+        args.tags,
+        max_pages=args.pages,
+        delay=args.delay,
+        date_from=args.start_date,
+        date_to=args.end_date,
+    )
 
     if args.json:
         serialisable = {tag: stats.__dict__ for tag, stats in results.items()}

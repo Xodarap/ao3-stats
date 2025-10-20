@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass
+from datetime import date
 from html.parser import HTMLParser
 from typing import Dict, Iterable, List, Optional, Tuple
 from urllib.parse import quote
@@ -93,12 +94,25 @@ def _encode_tag(tag: str) -> str:
     return quote(tag, safe="*")
 
 
-def _fetch_tag_page(tag: str, page: int) -> Tuple[List[int], bool]:
+def _fetch_tag_page(
+    tag: str,
+    page: int,
+    *,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+) -> Tuple[List[int], bool]:
     # Relationship tags encode special characters using `*x*` sequences.
     encoded_tag = _encode_tag(tag)
     url = f"{BASE_URL}/tags/{encoded_tag}/works"
+    params = {}
     if page > 1:
-        url = f"{url}?{urlencode({'page': page})}"
+        params["page"] = page
+    if date_from:
+        params["work_search[date_from]"] = date_from
+    if date_to:
+        params["work_search[date_to]"] = date_to
+    if params:
+        url = f"{url}?{urlencode(params)}"
 
     LOGGER.info("Fetching %s page %s", tag, page)
     request = Request(url, headers=DEFAULT_HEADERS)
@@ -115,16 +129,26 @@ def scrape_tag_kudos(
     *,
     max_pages: Optional[int] = None,
     delay: float = REQUEST_DELAY,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
 ) -> TagKudosStats:
     """Scrape kudos totals for a single relationship tag."""
 
     total_kudos = 0
     works = 0
     page = 1
+    date_from_str = date_from.isoformat() if date_from else None
+    date_to_str = date_to.isoformat() if date_to else None
+
     while True:
         if max_pages is not None and page > max_pages:
             break
-        kudos_values, has_next = _fetch_tag_page(tag, page)
+        kudos_values, has_next = _fetch_tag_page(
+            tag,
+            page,
+            date_from=date_from_str,
+            date_to=date_to_str,
+        )
         if not kudos_values:
             break
         total_kudos += sum(kudos_values)
@@ -142,11 +166,19 @@ def scrape_multiple_tags(
     *,
     max_pages: Optional[int] = None,
     delay: float = REQUEST_DELAY,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
 ) -> Dict[str, TagKudosStats]:
     """Scrape multiple tags and return a mapping of tag to totals."""
 
     results: Dict[str, TagKudosStats] = {}
     for tag in tags:
-        results[tag] = scrape_tag_kudos(tag, max_pages=max_pages, delay=delay)
+        results[tag] = scrape_tag_kudos(
+            tag,
+            max_pages=max_pages,
+            delay=delay,
+            date_from=date_from,
+            date_to=date_to,
+        )
         time.sleep(delay)
     return results
