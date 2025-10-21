@@ -28,3 +28,22 @@ python -m ao3_stats.csv_kudos data/ships_2025.csv data/ship_kudos_2025.csv --del
 
 The command writes results incrementally to `data/ship_kudos_2025.csv`, storing the
 total kudos and works for each relationship tag.
+
+## Visualising Viktor/Jayce share over time
+
+To recreate the Viktor/Jayce share plot that weights the relationship by kudos, hits,
+bookmarks, comments, words, and raw work counts—and to compare the top Arcane ships by
+the naive average of those metrics—first ensure the `data/created_dates.csv` dataset from
+the `data` branch is present locally. Then run:
+
+```
+python analysis/viktor_jayce_share.py
+```
+
+The script writes `figures/viktor_jayce_share.png` with the percentage of Viktor/Jayce
+works per month under each weighting, `figures/top_ships_naive_average.png` with the
+naive-average share for the top five ships (by average across the supplied metrics), and
+`figures/total_hits.png` with the total number of hits across all Arcane works per month.
+Use `--top-n` to change how many ships appear on the naive-average chart, and `--viktor-output`,
+`--top-output`, or `--total-hits-output` to customise the output paths. Generated figures are not
+tracked in the repository; regenerate them locally as needed.
