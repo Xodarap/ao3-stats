@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, List
@@ -12,7 +11,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from matplotlib import animation
 from matplotlib.animation import FuncAnimation
-from matplotlib.ticker import FuncFormatter
+from matplotlib import dates as mdates
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DATA_PATH = REPO_ROOT / "data" / "created_dates.csv"
@@ -107,14 +106,22 @@ def interpolate_counts(counts: pd.DataFrame, steps_per_month: int) -> pd.DataFra
     return interpolated
 
 
-def millions_formatter(value: float, _: int) -> str:
-    if value >= 1_000_000:
-        return f"{value / 1_000_000:.1f}M"
-    if value >= 10_000:
-        return f"{value / 1_000:.0f}k"
-    if value >= 1_000:
-        return f"{value / 1_000:.1f}k"
-    return f"{int(value)}"
+def interpolate_months(months: List[pd.Timestamp], steps_per_month: int) -> List[pd.Timestamp]:
+    """Return timestamps for each animation frame, including interpolated steps."""
+
+    if steps_per_month <= 1 or len(months) < 2:
+        return months
+
+    frame_months: List[pd.Timestamp] = []
+    for idx in range(len(months) - 1):
+        start = months[idx]
+        end = months[idx + 1]
+        delta = end - start
+        for step in range(steps_per_month):
+            fraction = step / steps_per_month
+            frame_months.append(start + fraction * delta)
+    frame_months.append(months[-1])
+    return frame_months
 
 
 def frame_labels(months: List[pd.Timestamp], steps_per_month: int) -> List[str]:
@@ -138,15 +145,18 @@ def build_animation(counts: pd.DataFrame, config: AnimationConfig) -> None:
     raw_counts = counts.copy()
     months = raw_counts.index.to_list()
     smoothed_counts = interpolate_counts(raw_counts, config.steps_per_month)
+    frame_months = interpolate_months(months, config.steps_per_month)
     labels = frame_labels(months, config.steps_per_month)
 
-    if len(smoothed_counts) != len(labels):
+    if len(smoothed_counts) != len(labels) or len(frame_months) != len(smoothed_counts):
         raise ValueError("Label and frame count mismatch; check interpolation settings.")
 
     ships = raw_counts.columns.to_list()
     colors = assign_colors(ships)
 
     deltas = smoothed_counts.diff().fillna(smoothed_counts)
+    ranks = smoothed_counts.rank(axis=1, ascending=False, method="first")
+    date_numbers = mdates.date2num(frame_months)
 
     width_inches = 9
     height_inches = 16
@@ -164,10 +174,6 @@ def build_animation(counts: pd.DataFrame, config: AnimationConfig) -> None:
     fig.patch.set_facecolor("#f7f5f2")
     ax.set_facecolor("#f7f5f2")
 
-    raw_max = raw_counts.values.max()
-    max_value = max(1000, math.ceil(raw_max / 1000) * 1000 if raw_max > 0 else 1000)
-    formatter = FuncFormatter(millions_formatter)
-
     lead_text = fig.text(
         0.5,
         0.92,
@@ -183,35 +189,6 @@ def build_animation(counts: pd.DataFrame, config: AnimationConfig) -> None:
         ax.clear()
         ax.set_facecolor("#f7f5f2")
 
-        values = smoothed_counts.iloc[frame_index]
-        top = values.nlargest(config.top_k)[::-1]
-        y_pos = list(range(len(top)))
-
-        bars = ax.barh(
-            y=y_pos,
-            width=top.values,
-            color=[colors.get(label, "#4c72b0") for label in top.index],
-            height=0.6,
-        )
-
-        delta = deltas.iloc[frame_index]
-        for bar, ship in zip(bars, top.index):
-            width = bar.get_width()
-            change = int(round(delta[ship]))
-            change_prefix = "↑" if change > 0 else "↓" if change < 0 else "→"
-            ax.text(
-                width + max_value * 0.01,
-                bar.get_y() + bar.get_height() / 2,
-                f"{int(round(width)):,} works {change_prefix}{abs(change):,}",
-                va="center",
-                ha="left",
-                fontsize=12,
-                color="#222222",
-            )
-
-        ax.set_xlim(0, max_value)
-        ax.xaxis.set_major_formatter(formatter)
-        ax.set_xlabel("Total AO3 works")
         ax.set_title(
             "Top AO3 Ships Over Time",
             fontsize=22,
@@ -230,23 +207,81 @@ def build_animation(counts: pd.DataFrame, config: AnimationConfig) -> None:
         ax.text(
             0,
             1.0,
-            "Cumulative AO3 works (fanfic count)",
+            "Rank trajectory by cumulative AO3 works",
             transform=ax.transAxes,
             fontsize=12,
             color="#555555",
         )
-        ax.set_yticks(y_pos)
-        ax.set_yticklabels(
-            [f"#{len(top) - idx}. {label}" if len(label) <= 38 else f"#{len(top) - idx}. {label[:35]}…" for idx, label in enumerate(top.index)]
-        )
-        ax.grid(axis="x", linestyle="--", alpha=0.2)
+
+        current_ranks = ranks.iloc[frame_index]
+        current_counts = smoothed_counts.iloc[frame_index]
+        current_deltas = deltas.iloc[frame_index]
+        visible_ships = current_ranks.nsmallest(config.top_k).index
+        label_offset = (date_numbers[-1] - date_numbers[0]) * 0.01
+
+        for ship in ships:
+            ship_ranks = ranks.loc[:frame_index, ship]
+            ship_dates = date_numbers[: len(ship_ranks)]
+            line_alpha = 1.0 if ship in visible_ships else 0.15
+            line_width = 3 if ship in visible_ships else 1.5
+            ax.plot(
+                ship_dates,
+                ship_ranks,
+                color=colors.get(ship, "#4c72b0"),
+                linewidth=line_width,
+                alpha=line_alpha,
+            )
+
+            if ship in visible_ships:
+                y_val = float(current_ranks[ship])
+                x_val = date_numbers[frame_index]
+                ax.scatter(
+                    [x_val],
+                    [y_val],
+                    color=colors.get(ship, "#4c72b0"),
+                    s=80,
+                    edgecolor="white",
+                    linewidth=1,
+                    zorder=5,
+                )
+                change = int(round(current_deltas[ship]))
+                change_prefix = "↑" if change > 0 else "↓" if change < 0 else "→"
+                label = f"{ship} — {int(round(current_counts[ship])):,} works {change_prefix}{abs(change):,}"
+                ax.text(
+                    x_val + label_offset,
+                    y_val,
+                    label,
+                    fontsize=11,
+                    color="#111111",
+                    va="bottom",
+                    ha="left",
+                    bbox=dict(
+                        boxstyle="round,pad=0.3",
+                        facecolor="white",
+                        edgecolor="none",
+                        alpha=0.8,
+                    ),
+                )
+
+        ax.set_xlim(date_numbers[0], date_numbers[-1])
+        locator = mdates.AutoDateLocator(minticks=4, maxticks=8)
+        ax.xaxis.set_major_locator(locator)
+        ax.xaxis.set_major_formatter(mdates.ConciseDateFormatter(locator))
+        ax.set_xlabel("Time")
+
+        ax.set_ylim(config.top_k + 0.5, 0.5)
+        ax.set_yticks(range(1, config.top_k + 1))
+        ax.set_yticklabels([f"#{rank}" for rank in range(1, config.top_k + 1)])
+        ax.set_ylabel("Rank (1 = most works)")
+        ax.grid(axis="both", linestyle="--", alpha=0.2)
         ax.invert_yaxis()
+
         for spine in ax.spines.values():
             spine.set_visible(False)
 
-        if len(top) > 0:
-            leader = top.index[-1]
-            leader_count = int(round(top.iloc[-1]))
+        if len(visible_ships) > 0:
+            leader = visible_ships[0]
+            leader_count = int(round(current_counts[leader]))
             lead_text.set_text(f"{leader} leads with {leader_count:,} works")
         else:
             lead_text.set_text("")
@@ -270,7 +305,7 @@ def build_animation(counts: pd.DataFrame, config: AnimationConfig) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Render a vertical bar-chart race showing AO3 ship popularity.",
+        description="Render a vertical line-chart animation of AO3 ship rankings over time.",
     )
     parser.add_argument(
         "--data",
