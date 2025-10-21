@@ -264,7 +264,7 @@ def build_animation(counts: pd.DataFrame, config: AnimationConfig) -> None:
         writer=writer,
         dpi=dpi,
         fps=config.fps,
-        bitrate=f"{config.bitrate_kbps}k",
+        bitrate=config.bitrate_kbps,
     )
 
 
