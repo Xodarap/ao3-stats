@@ -1,14 +1,12 @@
-"""Generate monthly ship hit totals for KPop Demon Hunters works."""
+"""Generate weekly ship hit totals for KPop Demon Hunters works."""
 from __future__ import annotations
-
-"""Generate monthly ship hit totals for KPop Demon Hunters works."""
 
 import argparse
 from pathlib import Path
 
 import pandas as pd
 
-from monthly_ship_hits import ShipNormalizer, compute_monthly_ship_hits
+from monthly_ship_hits import ShipNormalizer, compute_ship_hits_by_period
 
 
 def _strip_relationship_suffix(text: str) -> str:
@@ -30,7 +28,7 @@ def _clean_ship_series(series: pd.Series) -> pd.Series:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Create a month-by-ship pivot table of total hits for works tagged "
+            "Create a week-by-ship pivot table of total hits for works tagged "
             "with the KPop Demon Hunters (2025) event."
         )
     )
@@ -43,7 +41,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("data/kpop_demon_hunters_monthly_ship_hits.csv"),
+        default=Path("data/kpop_demon_hunters_weekly_ship_hits.csv"),
         help="Where to write the pivot table CSV.",
     )
     return parser.parse_args()
@@ -67,7 +65,11 @@ def main() -> int:
 
     df = load_metadata(args.input)
     normalizer = ShipNormalizer(df["ships"])
-    pivot = compute_monthly_ship_hits(df, normalizer=normalizer)
+    pivot = compute_ship_hits_by_period(
+        df,
+        freq="W-SUN",
+        normalizer=normalizer,
+    )
 
     totals = pivot.sum(axis=0)
     top_columns = totals.nlargest(10).index
