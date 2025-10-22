@@ -326,24 +326,36 @@ def explode_ships(
     return exploded
 
 
-def compute_monthly_ship_hits(
+def compute_ship_hits_by_period(
     df: pd.DataFrame,
     *,
+    freq: str,
     normalizer: ShipNormalizer | None = None,
 ) -> pd.DataFrame:
-    """Aggregate total hits per month for each ship."""
+    """Aggregate total hits per ship for periods derived from the created date."""
+
     df = df.copy()
-    df["month"] = df["created"].dt.to_period("M").astype(str)
+    df["period"] = df["created"].dt.to_period(freq).astype(str)
     exploded = explode_ships(df, normalizer=normalizer)
 
     if exploded.empty:
         raise ValueError("No ship data available after exploding ship list.")
 
     grouped = (
-        exploded.groupby(["month", "ship"], sort=True)["hits"].sum().sort_index()
+        exploded.groupby(["period", "ship"], sort=True)["hits"].sum().sort_index()
     )
     pivot = grouped.unstack(fill_value=0).sort_index(axis=1)
     return pivot
+
+
+def compute_monthly_ship_hits(
+    df: pd.DataFrame,
+    *,
+    normalizer: ShipNormalizer | None = None,
+) -> pd.DataFrame:
+    """Aggregate total hits per month for each ship."""
+
+    return compute_ship_hits_by_period(df, freq="M", normalizer=normalizer)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

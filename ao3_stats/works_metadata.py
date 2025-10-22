@@ -286,9 +286,12 @@ def parse_works(html: str) -> List[WorkMetadata]:
     return parser.works
 
 
-def scrape_works(search_url: str, pages: int, delay: float) -> List[WorkMetadata]:
+def scrape_works(
+    search_url: str, pages: int, delay: float, start_page: int = 1
+) -> List[WorkMetadata]:
     works: List[WorkMetadata] = []
-    for page_number in range(1, pages + 1):
+    for offset in range(pages):
+        page_number = start_page + offset
         page_url = _url_with_page(search_url, page_number)
         LOGGER.info("Fetching page %s: %s", page_number, page_url)
         html = fetch_page(page_url)
@@ -370,6 +373,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=DEFAULT_DELAY,
         help="Delay in seconds between page requests (default: %(default)s).",
     )
+    parser.add_argument(
+        "--start-page",
+        type=int,
+        default=1,
+        help="Listing page number to start fetching from (default: %(default)s).",
+    )
     return parser
 
 
@@ -379,7 +388,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
-    works = scrape_works(args.search_url, max(1, args.pages), max(0.0, args.delay))
+    works = scrape_works(
+        args.search_url,
+        max(1, args.pages),
+        max(0.0, args.delay),
+        max(1, args.start_page),
+    )
     write_csv(args.output, works)
     LOGGER.info("Wrote %s works to %s", len(works), args.output)
     return 0
