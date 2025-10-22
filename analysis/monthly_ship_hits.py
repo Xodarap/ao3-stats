@@ -62,8 +62,83 @@ def load_created_dates(path: Path) -> pd.DataFrame:
     return df
 
 
+_CONNECTOR_RE = re.compile(r"\s*([/&])\s*")
+
+
+def _clean_ship_part(part: str) -> str:
+    """Return a ship component with fandom parentheses removed."""
+
+    part = part.strip()
+    if not part:
+        return ""
+
+    # Drop any parenthetical fandom qualifiers, even if the closing parenthesis
+    # is missing in the source data.
+    part = re.sub(r"\s*\([^)]*\)", "", part)
+    part = re.sub(r"\s*\([^)]*$", "", part)
+
+    # Collapse repeated whitespace left behind by the removals.
+    part = re.sub(r"\s+", " ", part)
+    return part.strip()
+
+
+def _tokenize_ship(ship: str) -> tuple[list[str], list[str]]:
+    """Split a ship into cleaned parts and the connectors between them."""
+
+    parts: list[str] = []
+    connectors: list[str] = []
+    last_index = 0
+
+    for match in _CONNECTOR_RE.finditer(ship):
+        part = _clean_ship_part(ship[last_index:match.start()])
+        connector = match.group(1)
+
+        if part:
+            parts.append(part)
+            connectors.append(connector)
+        elif connectors:
+            # Multiple connectors in a row: keep only the most recent one.
+            connectors[-1] = connector
+
+        last_index = match.end()
+
+    final_part = _clean_ship_part(ship[last_index:])
+    if final_part:
+        parts.append(final_part)
+    elif connectors:
+        connectors.pop()
+
+    # Ensure we only keep connectors that have a following part.
+    if connectors and len(connectors) >= len(parts):
+        connectors = connectors[: max(len(parts) - 1, 0)]
+
+    return parts, connectors
+
+
+def _join_ship(parts: list[str], connectors: list[str]) -> str:
+    """Rebuild a ship string from parts and connectors."""
+
+    if not parts:
+        return ""
+
+    result: list[str] = [parts[0]]
+    for connector, part in zip(connectors, parts[1:]):
+        if connector == "/":
+            result.append("/")
+            result.append(part)
+        elif connector == "&":
+            result.append(" & ")
+            result.append(part)
+        else:
+            result.append(f" {connector} ")
+            result.append(part)
+
+    return "".join(result)
+
+
 def canonicalize_ship(ship: str) -> str:
-    """Normalize ship strings so variants like ``A/B`` and ``A & B`` combine."""
+    """Normalize ship strings while preserving connector semantics."""
+
     ship = ship.strip()
     if not ship:
         return ""
@@ -71,13 +146,11 @@ def canonicalize_ship(ship: str) -> str:
     # Apply Unicode normalization first to standardize punctuation variants.
     ship = unicodedata.normalize("NFKC", ship)
 
-    # Replace connectors ("/" or "&") with a single forward slash and tidy whitespace.
-    ship = re.sub(r"\s*[/&]\s*", "/", ship)
-    ship = re.sub(r"\s+", " ", ship)
+    parts, connectors = _tokenize_ship(ship)
+    if not parts:
+        return ""
 
-    parts = [part.strip() for part in ship.split("/")]
-    parts = [part for part in parts if part]
-    return "/".join(parts)
+    return _join_ship(parts, connectors)
 
 
 def _split_part(part: str) -> tuple[str, str]:
@@ -130,7 +203,8 @@ class ShipNormalizer:
         suffix_counts: dict[str, Counter[str]] = {}
 
         for ship in normalized_ships:
-            for part in ship.split("/"):
+            parts, _ = _tokenize_ship(ship)
+            for part in parts:
                 base, suffix = _split_part(part)
                 if not base:
                     continue
@@ -166,8 +240,10 @@ class ShipNormalizer:
         if not canonical:
             return ""
 
+        parts, connectors = _tokenize_ship(canonical)
+
         corrected_parts: list[str] = []
-        for part in canonical.split("/"):
+        for part in parts:
             base, suffix = _split_part(part)
             if not base:
                 continue
@@ -175,7 +251,7 @@ class ShipNormalizer:
             preferred_suffix = self._preferred_suffix.get(corrected_base, suffix)
             corrected_parts.append(corrected_base + preferred_suffix)
 
-        return "/".join(corrected_parts)
+        return _join_ship(corrected_parts, connectors)
 
     def _normalize_base(self, base: str) -> str:
         key = _base_key(base)
