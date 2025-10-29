@@ -1,4 +1,4 @@
-"""Generate a month-by-ship pivot table of total hits."""
+"""Generate a ship-by-month pivot table of total hits."""
 from __future__ import annotations
 
 import argparse
@@ -17,7 +17,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
         description=(
-            "Create a table where each row is a month, each column is a ship, and "
+            "Create a table where each row is a ship, each column is a month, and "
             "each value is the total number of hits for works featuring that ship "
             "in that month."
         )
@@ -391,11 +391,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         top_columns = totals.nlargest(args.top_k).index
         pivot = pivot.loc[:, top_columns]
 
+    ship_month = pivot.transpose()
+
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
-        pivot.to_csv(args.output)
+        ship_month.to_csv(args.output)
     else:
-        pivot.to_csv(sys.stdout)
+        ship_month.to_csv(sys.stdout)
     return 0
 
 
