@@ -1,4 +1,4 @@
-"""Generate a month-by-ship pivot table of total hits."""
+"""Generate a ship-by-month pivot table of total hits."""
 from __future__ import annotations
 
 import argparse
@@ -17,7 +17,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
         description=(
-            "Create a table where each row is a month, each column is a ship, and "
+            "Create a table where each row is a ship, each column is a month, and "
             "each value is the total number of hits for works featuring that ship "
             "in that month."
         )
@@ -48,13 +48,45 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+_CREATED_CANDIDATES = (
+    "created",
+    "date",
+    "published",
+    "published_at",
+    "created_at",
+)
+
+
+def _coerce_created_column(df: pd.DataFrame) -> pd.Series:
+    """Return a timestamp series derived from any known creation date column."""
+
+    for column in _CREATED_CANDIDATES:
+        if column not in df.columns:
+            continue
+
+        created = pd.to_datetime(df[column], errors="coerce")
+        if created.notna().any():
+            return created
+
+    raise KeyError(
+        "Input CSV must include a 'created' column or one of the "
+        f"alternate columns: {', '.join(_CREATED_CANDIDATES[1:])}."
+    )
+
+
 def load_created_dates(path: Path) -> pd.DataFrame:
     """Load the created dates dataset with the columns needed for aggregation."""
-    df = pd.read_csv(path)
-    df = df.dropna(subset=["created", "ships", "hits"])
 
-    df["created"] = pd.to_datetime(df["created"], errors="coerce")
+    df = pd.read_csv(path)
+
+    df["created"] = _coerce_created_column(df)
     df = df.dropna(subset=["created"])
+
+    for column in ("ships", "hits"):
+        if column not in df.columns:
+            raise KeyError(f"Input CSV must include a '{column}' column.")
+
+    df = df.dropna(subset=["ships", "hits"])
 
     df["hits"] = pd.to_numeric(df["hits"], errors="coerce")
     df = df.dropna(subset=["hits"])
@@ -359,11 +391,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         top_columns = totals.nlargest(args.top_k).index
         pivot = pivot.loc[:, top_columns]
 
+    ship_month = pivot.transpose()
+
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
-        pivot.to_csv(args.output)
+        ship_month.to_csv(args.output)
     else:
-        pivot.to_csv(sys.stdout)
+        ship_month.to_csv(sys.stdout)
     return 0
 
 
