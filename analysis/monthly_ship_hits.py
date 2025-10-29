@@ -48,13 +48,45 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+_CREATED_CANDIDATES = (
+    "created",
+    "date",
+    "published",
+    "published_at",
+    "created_at",
+)
+
+
+def _coerce_created_column(df: pd.DataFrame) -> pd.Series:
+    """Return a timestamp series derived from any known creation date column."""
+
+    for column in _CREATED_CANDIDATES:
+        if column not in df.columns:
+            continue
+
+        created = pd.to_datetime(df[column], errors="coerce")
+        if created.notna().any():
+            return created
+
+    raise KeyError(
+        "Input CSV must include a 'created' column or one of the "
+        f"alternate columns: {', '.join(_CREATED_CANDIDATES[1:])}."
+    )
+
+
 def load_created_dates(path: Path) -> pd.DataFrame:
     """Load the created dates dataset with the columns needed for aggregation."""
-    df = pd.read_csv(path)
-    df = df.dropna(subset=["created", "ships", "hits"])
 
-    df["created"] = pd.to_datetime(df["created"], errors="coerce")
+    df = pd.read_csv(path)
+
+    df["created"] = _coerce_created_column(df)
     df = df.dropna(subset=["created"])
+
+    for column in ("ships", "hits"):
+        if column not in df.columns:
+            raise KeyError(f"Input CSV must include a '{column}' column.")
+
+    df = df.dropna(subset=["ships", "hits"])
 
     df["hits"] = pd.to_numeric(df["hits"], errors="coerce")
     df = df.dropna(subset=["hits"])
