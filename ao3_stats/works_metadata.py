@@ -8,7 +8,7 @@ import logging
 import time
 from dataclasses import dataclass
 from html.parser import HTMLParser
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
 from urllib.parse import parse_qsl, urlparse, urlencode, urlunparse
 from urllib.request import Request, urlopen
 
@@ -286,8 +286,9 @@ def parse_works(html: str) -> List[WorkMetadata]:
     return parser.works
 
 
-def scrape_works(search_url: str, pages: int, delay: float) -> List[WorkMetadata]:
-    works: List[WorkMetadata] = []
+def scrape_works(
+    search_url: str, pages: int, delay: float
+) -> Iterator[List[WorkMetadata]]:
     for page_number in range(1, pages + 1):
         page_url = _url_with_page(search_url, page_number)
         LOGGER.info("Fetching page %s: %s", page_number, page_url)
@@ -296,13 +297,12 @@ def scrape_works(search_url: str, pages: int, delay: float) -> List[WorkMetadata
         if page_number > 1 and not page_works:
             LOGGER.info("No works returned on page %s; stopping early.", page_number)
             break
-        works.extend(page_works)
+        yield page_works
         if page_number != pages:
             time.sleep(delay)
-    return works
 
 
-def write_csv(path: str, works: Sequence[WorkMetadata]) -> None:
+def write_csv(path: str, works_pages: Iterable[Sequence[WorkMetadata]]) -> int:
     fieldnames = [
         "work_id",
         "title",
@@ -322,25 +322,31 @@ def write_csv(path: str, works: Sequence[WorkMetadata]) -> None:
     with open(path, "w", newline="", encoding="utf-8") as csv_file:
         writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
         writer.writeheader()
-        for work in works:
-            writer.writerow(
-                {
-                    "work_id": work.work_id,
-                    "title": work.title,
-                    "authors": "; ".join(work.authors),
-                    "ships": "; ".join(work.ships),
-                    "language": work.language,
-                    "words": work.words,
-                    "chapters": work.chapters,
-                    "collections": work.collections,
-                    "comments": work.comments,
-                    "kudos": work.kudos,
-                    "bookmarks": work.bookmarks,
-                    "hits": work.hits,
-                    "date": work.date,
-                    "url": work.url,
-                }
-            )
+        csv_file.flush()
+        total_written = 0
+        for page_works in works_pages:
+            for work in page_works:
+                writer.writerow(
+                    {
+                        "work_id": work.work_id,
+                        "title": work.title,
+                        "authors": "; ".join(work.authors),
+                        "ships": "; ".join(work.ships),
+                        "language": work.language,
+                        "words": work.words,
+                        "chapters": work.chapters,
+                        "collections": work.collections,
+                        "comments": work.comments,
+                        "kudos": work.kudos,
+                        "bookmarks": work.bookmarks,
+                        "hits": work.hits,
+                        "date": work.date,
+                        "url": work.url,
+                    }
+                )
+                total_written += 1
+            csv_file.flush()
+    return total_written
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -379,9 +385,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
-    works = scrape_works(args.search_url, max(1, args.pages), max(0.0, args.delay))
-    write_csv(args.output, works)
-    LOGGER.info("Wrote %s works to %s", len(works), args.output)
+    total = write_csv(
+        args.output,
+        scrape_works(args.search_url, max(1, args.pages), max(0.0, args.delay)),
+    )
+    LOGGER.info("Wrote %s works to %s", total, args.output)
     return 0
 
 
