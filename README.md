@@ -29,6 +29,21 @@ python -m ao3_stats.csv_kudos data/ships_2025.csv data/ship_kudos_2025.csv --del
 The command writes results incrementally to `data/ship_kudos_2025.csv`, storing the
 total kudos and works for each relationship tag.
 
+### Monthly top ships directly from an AO3 URL
+
+To scrape an AO3 tag/search listing and compute the top ship for each month by
+total hits in one step, run:
+
+```
+python -m analysis.monthly_top_ships_from_url \
+  "https://archiveofourown.org/tags/Formula%201%20RPF/works" \
+  --output data/formula_one_monthly_top_ships.csv \
+  --metadata-output data/formula_one_works_metadata.csv
+```
+
+Use `--pages` to override automatic page-count detection, `--delay` to tune the
+request pause, and `--limit` to keep only the first N monthly rows in the output.
+
 ## Visualising Viktor/Jayce share over time
 
 To recreate the Viktor/Jayce share plot that weights the relationship by kudos, hits,
